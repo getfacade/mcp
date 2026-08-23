@@ -1,0 +1,54 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "ai.getfacade/mcp",
+  "title": "GetFacade",
+  "description": "Designs a real house exterior on its own photo, prices it line by line and documents it.",
+  "version": "0.1.0",
+  "websiteUrl": "https://getfacade.ai/agents",
+  "repository": {
+    "url": "https://github.com/getfacade/mcp",
+    "source": "github"
+  },
+  "icons": [
+    {
+      "src": "https://getfacade.ai/icon-192.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "192x192"
+      ]
+    },
+    {
+      "src": "https://getfacade.ai/icon-512.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "512x512"
+      ]
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@getfacade/mcp",
+      "version": "0.1.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "GETFACADE_API_KEY",
+          "description": "Agent key issued at app.getfacade.ai under Account, Settings, API. Shown once.",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "GETFACADE_API_BASE_URL",
+          "description": "Base URL of the API. Leave unset to use the production one.",
+          "isRequired": false,
+          "default": "https://api.getfacade.ai/api/v1"
+        }
+      ]
+    }
+  ]
+}

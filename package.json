@@ -1,0 +1,48 @@
+{
+  "name": "@getfacade/mcp",
+  "version": "0.1.0",
+  "description": "MCP server for GetFacade.ai: design a house exterior on its own photo, with materials that apply in the building's country, products really sold there, and the build-up behind the surface",
+  "mcpName": "ai.getfacade/mcp",
+  "license": "MIT",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://getfacade.ai/agents",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/getfacade/mcp.git"
+  },
+  "bugs": {
+    "url": "https://getfacade.ai/help"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "getfacade",
+    "facade",
+    "exterior-design",
+    "architecture",
+    "renovation"
+  ],
+  "type": "module",
+  "bin": {
+    "getfacade-mcp": "src/index.js"
+  },
+  "files": [
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node test/smoke.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.0",
+    "zod": "^3.25.76"
+  }
+}

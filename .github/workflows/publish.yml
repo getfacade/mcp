@@ -1,0 +1,73 @@
+name: Publish
+
+# One tag publishes both halves of a release: the npm package people install,
+# and the MCP registry entry clients discover. They must not drift apart, so
+# they live in one job: the registry refuses an entry whose npm package does
+# not carry a matching `mcpName`, and a registry entry pointing at a version
+# npm never received is a dead link.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # The DNS key that proves ai.getfacade/* belongs to us lives in this
+    # environment, not in plain repository secrets, so it can be restricted to
+    # release tags and cannot be read by a pull request from a fork.
+    environment: publish
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (and its provenance attestation)
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing needs a newer npm than the runner image ships.
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+      - run: npm test
+
+      # Three versions have to agree: the tag, the package and the registry
+      # entry. Catching it here costs a failed run; catching it after the fact
+      # costs a published version that can never be reused.
+      - name: Check the versions agree
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          SRV="$(node -p "require('./server.json').version")"
+          NAME="$(node -p "require('./package.json').mcpName")"
+          SRV_NAME="$(node -p "require('./server.json').name")"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            [ "$TAG" = "$PKG" ] || { echo "tag $GITHUB_REF_NAME does not match package.json $PKG"; exit 1; }
+          fi
+          [ "$SRV" = "$PKG" ] || { echo "server.json $SRV does not match package.json $PKG"; exit 1; }
+          [ "$NAME" = "$SRV_NAME" ] || { echo "mcpName $NAME does not match server.json $SRV_NAME"; exit 1; }
+          echo "version $PKG, name $NAME"
+
+      # No NPM_TOKEN: the registry trusts this workflow through OIDC, and signs
+      # the result, so what npm shows is the commit the package was built from.
+      - name: Publish to npm
+        run: npm publish
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+
+      # The namespace is the domain one, so the proof is the Ed25519 key behind
+      # the TXT record on the apex of getfacade.ai. GitHub OIDC would only grant
+      # io.github.* and cannot speak for this name.
+      - name: Authenticate to the MCP registry
+        run: ./mcp-publisher login dns --domain getfacade.ai --private-key "$MCP_DNS_PRIVATE_KEY"
+        env:
+          MCP_DNS_PRIVATE_KEY: ${{ secrets.MCP_DNS_PRIVATE_KEY }}
+
+      - name: Publish to the MCP registry
+        run: ./mcp-publisher publish
