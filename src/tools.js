@@ -113,9 +113,10 @@ export function buildTools(api) {
         colors: z.array(z.string()).max(10).optional(),
         brand_selections: z.array(z.string()).max(10).optional().describe('Manufacturer products, e.g. "paint:product:412"'),
         prompt: z.string().max(400).optional().describe('Free-form instruction for this design'),
+        render_effort: z.enum(['BRAINSTORM', 'STANDARD', 'HIGH']).optional().describe('How hard the engine works on this picture: BRAINSTORM is the quickest, STANDARD the middle, HIGH the slowest and most detailed. Some buildings pick the engine themselves and this choice does not reach them'),
         seed: z.number().int().min(1).max(2147483647).optional(),
       },
-      async handler({ building_id, view_id, style_ids, colors, brand_selections, prompt, seed }) {
+      async handler({ building_id, view_id, style_ids, colors, brand_selections, prompt, render_effort, seed }) {
         const concept = await api.post(`/projects/${building_id}/concepts`, {
           data: {
             type: 'concept',
@@ -139,6 +140,7 @@ export function buildTools(api) {
               style_ids,
               colors,
               brand_selections,
+              render_effort,
               prompts: prompt ? { prompt_concept: prompt } : undefined,
             },
           },
@@ -166,9 +168,10 @@ export function buildTools(api) {
         style_ids: z.array(z.number().int()).max(10).optional(),
         colors: z.array(z.string()).max(10).optional(),
         brand_selections: z.array(z.string()).max(10).optional(),
+        render_effort: z.enum(['BRAINSTORM', 'STANDARD', 'HIGH']).optional().describe('How hard the engine works on this picture: BRAINSTORM is the quickest, STANDARD the middle, HIGH the slowest and most detailed. Some buildings pick the engine themselves and this choice does not reach them'),
         seed: z.number().int().min(1).max(2147483647).optional(),
       },
-      async handler({ render_id, design_id, building_id, instruction, style_ids, colors, brand_selections, seed }) {
+      async handler({ render_id, design_id, building_id, instruction, style_ids, colors, brand_selections, render_effort, seed }) {
         if (!render_id && !design_id) {
           throw new Error('refine_design needs either `render_id` (the picture to change) or `design_id` (the design whose finished render to change).');
         }
@@ -197,6 +200,7 @@ export function buildTools(api) {
               style_ids,
               colors,
               brand_selections,
+              render_effort,
               prompts: { prompt_concept: instruction },
             },
           },
