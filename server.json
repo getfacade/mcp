@@ -47,6 +47,12 @@
           "description": "Base URL of the API. Leave unset to use the production one.",
           "isRequired": false,
           "default": "https://api.getfacade.ai/api/v1"
+        },
+        {
+          "name": "GETFACADE_LANG",
+          "description": "Language the service answers and refuses in. Leave unset for English.",
+          "isRequired": false,
+          "default": "en"
         }
       ]
     }
