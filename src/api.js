@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto';
 
 const DEFAULT_BASE_URL = 'https://api.getfacade.ai/api/v1';
+const DEFAULT_LANGUAGE = 'en';
 
 // A paid create call is retried by this wrapper, never by the agent: the agent
 // has no way of knowing whether the request that timed out had already been
@@ -39,7 +40,7 @@ export class ApiError extends Error {
 }
 
 export class GetFacadeApi {
-  constructor({ apiKey, baseUrl }) {
+  constructor({ apiKey, baseUrl, language }) {
     if (!apiKey) {
       throw new Error(
         'GETFACADE_API_KEY is not set. Issue an agent key at https://app.getfacade.ai/account/agent-keys and pass it in the environment.',
@@ -48,6 +49,13 @@ export class GetFacadeApi {
 
     this.apiKey = apiKey;
     this.baseUrl = (baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    // Every message a caller sees is the API's own text, so the language of a
+    // refusal is a wire decision, not a display one. Without this header the
+    // server falls back to whatever locale the account was last saved with,
+    // and the same refusal reaches one agent in English and another in
+    // Romanian. Pinning it keeps the answer reproducible; a deployment that
+    // wants its user's language sets GETFACADE_LANG.
+    this.language = language || DEFAULT_LANGUAGE;
   }
 
   async request(method, path, { body, query, idempotencyKey } = {}) {
@@ -62,6 +70,7 @@ export class GetFacadeApi {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         Accept: 'application/json',
+        'Accept-Language': this.language,
         ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },

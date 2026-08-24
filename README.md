@@ -51,6 +51,10 @@ To run a checkout instead of the published package, point the client at it:
 |---|---|---|
 | `GETFACADE_API_KEY` | yes | — |
 | `GETFACADE_API_BASE_URL` | no | `https://api.getfacade.ai/api/v1` |
+| `GETFACADE_LANG` | no | `en` |
+
+Messages, including refusals, come from the service in the language of
+`GETFACADE_LANG`. Set it to the language the answer should be read in.
 
 ## Tools
 

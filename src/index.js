@@ -26,6 +26,7 @@ import { buildTools } from './tools.js';
 const api = new GetFacadeApi({
   apiKey: process.env.GETFACADE_API_KEY,
   baseUrl: process.env.GETFACADE_API_BASE_URL,
+  language: process.env.GETFACADE_LANG,
 });
 
 const INSTRUCTIONS = `GetFacade designs the exterior of a real house and shows the design on a photo of that house.
