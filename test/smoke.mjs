@@ -219,6 +219,31 @@ assert.deepEqual(names, [
   'upscale_render',
 ]);
 
+// Every tool declares its annotations. A client decides from them whether a
+// call needs the person's confirmation, and both directories reject a server
+// that ships a tool without them, so a new tool missing one must fail here
+// rather than at review. The four deletes and the estimate-line edit are the
+// only calls that may take something away, and nothing that reads may write.
+for (const tool of tools) {
+  const hints = tool.annotations;
+
+  assert.ok(hints, `tool ${tool.name} ships without annotations`);
+  assert.equal(hints.openWorldHint, true, `tool ${tool.name} talks to the service`);
+
+  const isRead = tool.name.startsWith('get_') || tool.name.startsWith('list_');
+  assert.equal(hints.readOnlyHint, isRead, `tool ${tool.name} is annotated as the wrong kind`);
+
+  if (!isRead) {
+    const takesAway = tool.name.startsWith('delete_') || tool.name === 'update_estimate_line';
+
+    assert.equal(hints.destructiveHint, takesAway, `tool ${tool.name} misdeclares what it destroys`);
+  }
+}
+
+// Spending is never idempotent: a repeat of a purchase is a second charge, and
+// a client that treated it as safe to retry would double it.
+assert.equal(tools.find((tool) => tool.name === 'buy_tokens').annotations.idempotentHint, false);
+
 const created = JSON.parse((await client.callTool({ name: 'create_building', arguments: { name: 'Maple St 14' } })).content[0].text);
 assert.equal(created.building_id, 'bld-1');
 assert.equal(calls[0].auth, 'Bearer test-key');

@@ -32,11 +32,34 @@ const VALIDATION_POLL_ATTEMPTS = 25;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Every tool carries `annotations`, and every tool must: a client decides from
+ * them whether a call needs the person's confirmation, and both the Claude and
+ * the ChatGPT directories reject a server whose tools do not declare them.
+ *
+ * How they are read here. `readOnlyHint` is true only when the call cannot
+ * change anything on the account. `destructiveHint` is true when a call
+ * overwrites or removes something a person made, which is the four deletes and
+ * the estimate-line edit; ordering a render, an estimate or an album only adds,
+ * so it is false there even though it costs money. `idempotentHint` is true
+ * when repeating the same call changes nothing further: deleting what is
+ * already gone, or writing a line the same values twice. It is false on
+ * everything that mints new work or spends the wallet, `buy_tokens` above all,
+ * where a repeat is a second charge. `openWorldHint` is true everywhere,
+ * because every handler here is an HTTP call to the service.
+ */
+
 export function buildTools(api) {
   return [
     {
       name: 'create_building',
       title: 'Create a building',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
       description:
         'Create a building (a house to design). The name must be unique within the account, max 50 characters — reusing a name is refused, so pick a distinct one instead of retrying the same. `goals` is the free-form brief (max 10000 chars).',
       schema: {
@@ -59,6 +82,12 @@ export function buildTools(api) {
     {
       name: 'upload_photo',
       title: 'Upload a photo of the building',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
       description:
         'Upload an exterior photo of the building and wait for it to be validated. Three legs: register the view, PUT the bytes to storage, confirm. Validation is asynchronous; the result says whether the photo was accepted, and a rejected photo cannot be rendered. The wait is bounded: a `pending` answer means validation is still running, and calling this again with the same file resumes it on the same view rather than uploading a second copy.',
       schema: {
@@ -104,6 +133,12 @@ export function buildTools(api) {
     {
       name: 'start_design',
       title: 'Start a design render',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
       description:
         'Design the exterior of this house on a chosen view, and show the result as a picture. The design is worked out against the building\'s country: which materials are applicable there, which manufacturer products are really sold there, and what the build-up behind the surface is — the render is how that decision is shown, not a picture made for its own sake. Creates a new design (concept) and queues the work; returns a job id to poll with get_job. `prompt` is the free-form wish for this design ("a modern facade with a wide porch"). Colors accept the same strings the apps use: "palette:1", "paint:412", "siding:88@double-4-dutchlap" or "#RRGGBB" — order carries the 60/30/10 role, the first entry is the dominant wall color; `brand_selections` names real manufacturer products: "siding:brand:12", "siding:line:40@double-4-dutchlap", "paint:product:412". Omit `seed` unless reproducing an earlier render. To change a design that already rendered, use refine_design instead of starting another one.',
       schema: {
@@ -158,6 +193,12 @@ export function buildTools(api) {
     {
       name: 'refine_design',
       title: 'Refine a design',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
       description:
         'Revise a finished design in words: "put a canopy over the front door", "make the roof darker". The revision is applied to the finished design, so what is not mentioned stays as it is — this is the tool for every step after the first, not start_design. Give it either the `render_id` of the picture to change (the job id start_design returned) or the `design_id` (with `building_id`) of the design whose finished main render should be changed. The parent render must be finished; refining an unfinished one is refused. Queues a render and returns a new job id, plus the `design_id` the result lands in (the server keeps every step as its own design, so the previous picture is never overwritten). Styles, colors and brands are optional here: pass them only to change them.',
       schema: {
@@ -222,6 +263,10 @@ export function buildTools(api) {
     {
       name: 'get_job',
       title: 'Check one job',
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
       description:
         'Poll one queued job. `kind` says what it is: a render, an estimate, or an album (albums are listed per design, so an album lookup needs `design_id`). The finished status differs by kind: a render and an album read `completed`, an estimate reads `ready`. Stop polling on any of those and on `failed`, where `error` says what went wrong and `error_code` names it; repeat that reason as it stands instead of composing one. A render and an album report `expected_seconds`, how long that job usually takes end to end, so the wait between polls can be paced by it; an estimate does not, and reads null. The `result_url` of a finished job is a permanent public link: no signature, no expiry, so it can be handed to a person as it stands. It also keeps working for anyone it is forwarded to and cannot be recalled, so pass it on as deliberately as any other shared link.',
       schema: {
@@ -285,6 +330,10 @@ export function buildTools(api) {
     {
       name: 'list_jobs',
       title: 'List recent jobs',
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
       description:
         'Recent jobs across the account — renders, estimates and albums in one list, unfinished ones first. Use it to catch up after a restart: each row carries the `kind` and `design_id` that get_job asks for, and the `building_id` the job belongs to. Use get_job to poll a single known job.',
       schema: {
@@ -317,6 +366,10 @@ export function buildTools(api) {
     {
       name: 'list_designs',
       title: 'List designs of a building',
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
       description:
         'All designs of a building with their renders. This is where the render ids for order_estimate, order_album and refine_design come from — `main_render_id` is the finished render of a design, null while nothing has finished, and `main_render_url` is its permanent public link (no signature, no expiry, safe to hand to a person, and not recallable once shared). Per-render state is not here: poll get_job for that.',
       schema: { building_id: z.string() },
@@ -341,6 +394,12 @@ export function buildTools(api) {
     {
       name: 'order_estimate',
       title: 'Order a cost estimate',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
       description:
         'Price the design, line by line, in materials and labour, for the renders you name. The figures come from the design itself: what the specified materials and build-up cost in this country. Currency and measurement system default to the building\'s country and the written text to the account language; do not guess any of them, omit them unless the caller asked for a specific one. The money follows the house, the words follow the reader: a building in one country can be priced in its own currency and still be written up in the language the person asking reads.',
       schema: {
@@ -373,6 +432,12 @@ export function buildTools(api) {
     {
       name: 'order_album',
       title: 'Order a PDF album',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
       description:
         'Document the design as a PDF album (the blueprint document) for the renders you name: the materials, the build-up of the facade, safety notes and the regulatory references behind them. This is the document a crew builds from. Name the `estimate_id` of the estimate whose prices belong in it: without one the album takes the newest finished estimate of the design, which is not necessarily the one that was just ordered. Requires a completed main render on that design, otherwise the API refuses with an explanation. `requirements` is not honoured on every account: when it is not, the album is still made and `notices` says so, in the API\'s own words. The finished album is a permanent public link, so it can be handed to a person as it stands, and it stays readable for anyone it is forwarded to.',
       schema: {
@@ -416,6 +481,12 @@ export function buildTools(api) {
     {
       name: 'upscale_render',
       title: 'Upscale a render',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
       description:
         'Enlarge a completed render to a higher resolution. Costs tokens like a render and runs asynchronously: poll the returned job with get_job. A render that is already upscaled, or not finished yet, is refused by the API with an explanation.',
       schema: {
@@ -432,6 +503,10 @@ export function buildTools(api) {
     {
       name: 'get_estimate',
       title: 'Read an estimate',
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
       description:
         'The finished estimate: its totals, the area and duration it assumes, and every line with its quantity, unit and price. This is the only way to see what was estimated — get_job reports the status of an estimate, never its content. The `unit` of a line is the display code to reuse in add_estimate_line.',
       schema: { estimate_id: z.string() },
@@ -482,6 +557,12 @@ export function buildTools(api) {
     {
       name: 'add_estimate_line',
       title: 'Add a line to an estimate',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
       description:
         'Add one line to a generated estimate. `unit` must be a display code of the estimate\'s own measurement system — read an existing line to see which codes it uses rather than guessing. Totals are recomputed by the server.',
       schema: {
@@ -508,6 +589,12 @@ export function buildTools(api) {
     {
       name: 'update_estimate_line',
       title: 'Edit a line of an estimate',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
       description:
         'Change one line of a generated estimate — its name, quantity, unit, unit price, category or section. Only the fields passed are changed. Totals are recomputed by the server.',
       schema: {
@@ -536,6 +623,12 @@ export function buildTools(api) {
     {
       name: 'delete_estimate_line',
       title: 'Remove a line from an estimate',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
       description: 'Remove one line from a generated estimate. Totals are recomputed by the server.',
       schema: {
         estimate_id: z.string(),
@@ -551,6 +644,12 @@ export function buildTools(api) {
     {
       name: 'delete_render',
       title: 'Delete a render',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
       description:
         'Delete one render. Deleting the main render of a design returns that design to draft, so it can be rendered again without creating a new one. Deletion is soft on the server side and can be undone by a person in the app; this tool cannot undo it.',
       schema: {
@@ -566,6 +665,12 @@ export function buildTools(api) {
     {
       name: 'delete_design',
       title: 'Delete a design',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
       description:
         'Delete one design (concept) of a building, with the renders under it. Deletion is soft on the server side and can be undone by a person in the app; this tool cannot undo it.',
       schema: {
@@ -582,6 +687,12 @@ export function buildTools(api) {
     {
       name: 'delete_building',
       title: 'Delete a building',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
       description:
         'Delete a building with everything under it: photos, designs, renders, estimates and albums. Deletion is soft on the server side and can be undone by a person in the app; this tool cannot undo it. Tokens already spent are not refunded.',
       schema: {
@@ -597,6 +708,10 @@ export function buildTools(api) {
     {
       name: 'list_token_packages',
       title: 'List the token packages',
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
       description:
         'The packages this account can buy, with their price and how many tokens each carries. Read this before buy_tokens instead of assuming a ladder — the packages and their prices change.',
       schema: {},
@@ -615,6 +730,12 @@ export function buildTools(api) {
     {
       name: 'buy_tokens',
       title: 'Buy tokens for this key',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
       description:
         "Buy one token package for this key's wallet. Only works if the key was issued with purchasing enabled, and only up to what the key may still spend — a purchase cannot lift the key's own spend cap. The answer says `charged` when the payment provider took it from the saved payment method, or `requires_human` with a `checkout_url` a person has to open. Either way the tokens arrive asynchronously: poll get_balance.",
       schema: {
@@ -639,6 +760,10 @@ export function buildTools(api) {
     {
       name: 'get_balance',
       title: 'Check the agent wallet',
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
       description:
         'What this key can still spend: the api-scope balance of the account and the cap of this key. `is_admissible` is the server\'s own answer to "will the next paid call be accepted" — read it instead of comparing the numbers yourself.',
       schema: {},
@@ -664,6 +789,12 @@ export function buildTools(api) {
     {
       name: 'report_problem',
       title: 'Report a problem with this API',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
       description:
         'Report something wrong with this API itself: a field that is documented but never arrives, a refusal whose wording leaves no way forward, a call that only works on the second try, a result that does not match what was asked for. Free, and it works on an empty wallet, so a refusal can be reported the moment it happens. This is not the way to reach a person about an account or a charge, and no reply comes back through it; what comes back is a reference to quote. Say what was attempted, what was expected and what happened instead, and put the tool name and the ids in `context` so the report can be traced.',
       schema: {

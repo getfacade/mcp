@@ -62,7 +62,12 @@ const server = new McpServer(
 for (const tool of buildTools(api)) {
   server.registerTool(
     tool.name,
-    { title: tool.title, description: tool.description, inputSchema: tool.schema },
+    {
+      title: tool.title,
+      description: tool.description,
+      inputSchema: tool.schema,
+      annotations: tool.annotations,
+    },
     async (input) => {
       try {
         const result = await tool.handler(input ?? {});
