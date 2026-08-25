@@ -50,6 +50,27 @@ const call = async (name, args) => {
   return JSON.parse(text);
 };
 
+/** Poll one job to its end. An album takes longer than a render, so the budget
+ * is generous; a job still running when it expires is a failure worth seeing. */
+const settle = async (jobId, kind = 'render', designId) => {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const job = await call('get_job', {
+      job_id: jobId,
+      kind,
+      ...(designId ? { design_id: designId } : {}),
+    });
+
+    // The finished word differs by kind: a render and an album read
+    // `completed`, an estimate reads `ready`. Treating them as one status here
+    // would hide exactly the mismatch this journey exists to catch.
+    if (['completed', 'ready', 'failed', 'error'].includes(String(job.status))) return job;
+
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+
+  throw new Error(`job ${jobId} never finished`);
+};
+
 const before = await call('get_balance', {});
 assert.equal(before.scope, 'api', 'the key must spend the agent wallet, not the app one');
 
@@ -69,15 +90,7 @@ if (process.env.RENDER === '1') {
     prompt: 'dark grey siding, white trim',
   });
 
-  let job;
-
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    job = await call('get_job', { job_id: design.job_id });
-
-    if (['completed', 'failed', 'error'].includes(String(job.status))) break;
-
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-  }
+  const job = await settle(design.job_id);
 
   assert.equal(job.status, 'completed');
   assert.ok(job.result_url, 'a completed render must hand the agent an image');
@@ -85,8 +98,46 @@ if (process.env.RENDER === '1') {
   const designs = await call('list_designs', { building_id: building.building_id });
   assert.equal(designs[0].has_main_render, true);
 
+  // Everything below is the part an agent reaches only after a picture exists,
+  // and it is the part that used to go unchecked: the header promised it, the
+  // script stopped at the render. A refusal here (a stale estimate, an album
+  // ordered against an unfinished render) is invisible until somebody pays for
+  // it, so the journey now buys all three legs on the same design.
+  const refined = await call('refine_design', {
+    render_id: design.job_id,
+    instruction: 'make the roof darker',
+  });
+
+  const refinedJob = await settle(refined.job_id);
+  assert.equal(refinedJob.status, 'completed');
+  assert.ok(refinedJob.result_url, 'a refinement must hand back its own picture');
+
+  const estimateOrder = await call('order_estimate', {
+    design_id: design.design_id,
+    building_id: building.building_id,
+    render_ids: [design.job_id],
+  });
+
+  const estimateJob = await settle(estimateOrder.job_id, 'estimate');
+  assert.equal(estimateJob.status, 'ready');
+
+  const estimate = await call('get_estimate', { estimate_id: estimateOrder.job_id });
+  assert.ok(estimate.lines?.length, 'an estimate with no lines prices nothing');
+
+  const albumOrder = await call('order_album', {
+    design_id: design.design_id,
+    render_ids: [design.job_id],
+    include_estimate: true,
+    estimate_id: estimateOrder.job_id,
+  });
+
+  const albumJob = await settle(albumOrder.job_id, 'album', design.design_id);
+  assert.equal(albumJob.status, 'completed');
+  assert.ok(albumJob.result_url, 'a finished album must be a link somebody can open');
+
   const after = await call('get_balance', {});
   assert.ok(after.spent > before.spent, 'the render must land on this key, not on the human wallet');
+  console.log(`\nspent on this journey: ${(after.spent - before.spent).toFixed(2)} tokens`);
 }
 
 await client.close();

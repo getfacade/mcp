@@ -60,7 +60,7 @@ Messages, including refusals, come from the service in the language of
 
 | Tool | What it does |
 |---|---|
-| `create_building` | Creates a building. The name is unique per account. |
+| `create_building` | Creates a building. The name is unique per account. Say where it stands, or the place is inferred from the connection the call arrives on. |
 | `upload_photo` | Registers a view, uploads the bytes, confirms, waits for validation. |
 | `start_design` | Creates a design and queues its render. Returns a job id. |
 | `refine_design` | Changes a finished design in words. Every step after the first. |

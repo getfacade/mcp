@@ -1,6 +1,6 @@
 {
   "name": "@getfacade/mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server for GetFacade.ai: design a house exterior on its own photo, with materials that apply in the building's country, products really sold there, and the build-up behind the surface",
   "mcpName": "ai.getfacade/mcp",
   "license": "MIT",

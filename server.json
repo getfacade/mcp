@@ -3,7 +3,7 @@
   "name": "ai.getfacade/mcp",
   "title": "GetFacade",
   "description": "Designs a real house exterior on its own photo, prices it line by line and documents it.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "websiteUrl": "https://getfacade.ai/agents",
   "repository": {
     "url": "https://github.com/getfacade/mcp",
@@ -30,7 +30,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@getfacade/mcp",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

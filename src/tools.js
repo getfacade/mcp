@@ -65,7 +65,7 @@ export function buildTools(api) {
       schema: {
         name: z.string().max(50).describe('Unique building name within this account'),
         goals: z.string().max(10000).optional().describe('Free-form brief for the design'),
-        construction_region: z.string().max(255).optional().describe('Region, used for pricing and regulations'),
+        construction_region: z.string().max(255).optional().describe('Where the building stands, e.g. "Texas, US" or "Bavaria, Germany". Decides which materials and manufacturer products apply there, the currency and units the estimate is priced in, and the norms the album cites. Left out, the place is inferred from the account: where it appears to be, then the language it uses, and metric units when neither settles it. That guess reads the connection the call arrives on, which for an agent is often a datacenter or a VPN exit in another country, so it can land far from the house. Name the place whenever it is known, and ask for it when it is not.'),
       },
       async handler({ name, goals, construction_region }) {
         const created = await api.post('/projects', {
