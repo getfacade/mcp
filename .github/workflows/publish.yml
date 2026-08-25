@@ -58,6 +58,15 @@ jobs:
 
       # No NPM_TOKEN: the registry trusts this workflow through OIDC, and signs
       # the result, so what npm shows is the commit the package was built from.
+      # Two things decide whether this can publish without a token: an npm new
+      # enough to speak OIDC, and a runner allowed to mint the identity token.
+      # A failure here is otherwise indistinguishable from a missing trusted
+      # publisher on npm's side, so both are printed before the attempt.
+      - name: Show what the runner can prove
+        run: |
+          echo "npm $(npm --version), node $(node --version)"
+          echo "identity token endpoint: ${ACTIONS_ID_TOKEN_REQUEST_URL:+present}${ACTIONS_ID_TOKEN_REQUEST_URL:-MISSING}"
+
       - name: Publish to npm
         run: npm publish
 
