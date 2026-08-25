@@ -24,10 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # No `registry-url` here on purpose: it writes an .npmrc that reads the
+      # auth token from NODE_AUTH_TOKEN, and with no token to put there npm
+      # sends an empty credential and the registry answers 404, as if the
+      # package did not exist. Trusted publishing needs npm to find NO
+      # credential at all, so that it reaches for the OIDC identity instead.
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
 
       # Trusted publishing needs a newer npm than the runner image ships.
       - run: npm install -g npm@latest
