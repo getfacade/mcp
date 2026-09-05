@@ -89,7 +89,7 @@ export function buildTools(api) {
         openWorldHint: true,
       },
       description:
-        'Upload an exterior photo of the building and wait for it to be validated. Three legs: register the view, PUT the bytes to storage, confirm. Validation is asynchronous; the result says whether the photo was accepted, and a rejected photo cannot be rendered. The wait is bounded: a `pending` answer means validation is still running, and calling this again with the same file resumes it on the same view rather than uploading a second copy.',
+        'Upload an exterior photo of the building and wait for the answer. Three legs: register the file, PUT the bytes to storage, confirm. What the photo turns out to be is decided on the server: a view of the house that can be designed, a drawing or reference kept with the building, or a refusal with the reason. The answer says which, and only a photo accepted as a view carries a `view_id` to design from. The wait is bounded: a `pending` answer means it is still being read, and calling this again with the same file resumes it rather than uploading a second copy.',
       schema: {
         building_id: z.string().describe('Building id from create_building'),
         file_path: z.string().describe('Absolute path to a JPEG, PNG or WebP file on this machine'),
@@ -98,9 +98,9 @@ export function buildTools(api) {
       async handler({ building_id, file_path, wait_for_validation = true }) {
         const image = await readImage(file_path);
 
-        const registered = await api.post(`/projects/${building_id}/angles`, {
+        const registered = await api.post(`/projects/${building_id}/uploads`, {
           data: {
-            type: 'angle',
+            type: 'upload',
             attributes: {
               md5: image.md5,
               width: image.width,
@@ -112,21 +112,23 @@ export function buildTools(api) {
           },
         });
 
-        const angleId = registered.data.id;
+        const uploadId = registered.data.id;
         const policy = registered.data.attributes?.upload_policy;
 
         if (!policy) {
-          throw new Error('The API returned no upload policy for this view; the photo cannot be uploaded.');
+          throw new Error('The service returned no upload policy for this file; the photo cannot be uploaded.');
         }
 
         await api.putFile(policy, image.bytes, image.contentType);
-        await api.post(`/angles/${angleId}/confirm`, {});
+        await api.post(`/projects/${building_id}/uploads/${uploadId}/confirm`, {});
 
         if (!wait_for_validation) {
-          return { view_id: angleId, validation: { status: 'pending' } };
+          return { upload_id: uploadId, view_id: null, validation: { status: 'pending' } };
         }
 
-        return { view_id: angleId, validation: await waitForValidation(api, angleId) };
+        const settled = await waitForValidation(api, building_id, uploadId);
+
+        return { upload_id: uploadId, view_id: settled.view_id, validation: settled.validation };
       },
     },
 
@@ -829,21 +831,31 @@ export function buildTools(api) {
 }
 
 /**
- * The one place this server waits. Validation is announced over a websocket the
+ * The one place this server waits. The answer is announced over a websocket the
  * agent does not have, so the documented polling point is used instead, and the
  * server's own `is_in_progress` flag decides when to stop asking — the set of
  * terminal statuses is not re-derived here (it has already grown four times).
+ *
+ * `view_id` is set only when the file was accepted as a view of the house. A
+ * drawing or a reference kept with the building has no view to design from, and
+ * a refusal has nothing at all.
  */
-async function waitForValidation(api, angleId) {
+async function waitForValidation(api, buildingId, uploadId) {
   for (let attempt = 0; attempt < VALIDATION_POLL_ATTEMPTS; attempt += 1) {
-    const attributes = (await api.get(`/angles/${angleId}/validation`)).data?.attributes ?? {};
+    const attributes = (await api.get(`/projects/${buildingId}/uploads/${uploadId}`)).data?.attributes ?? {};
+    const validation = attributes.validation ?? {};
 
-    if (attributes.is_in_progress === false) {
+    if (validation.is_in_progress === false) {
+      const outcome = attributes.outcome ?? {};
+
       return {
-        status: attributes.status,
-        is_valid: attributes.is_valid,
-        reason: attributes.validation_failure_reason ?? null,
-        recommendations: attributes.recommendations ?? null,
+        view_id: outcome.type === 'angle' ? outcome.id : null,
+        validation: {
+          status: validation.status,
+          is_valid: validation.is_valid,
+          reason: validation.validation_failure_reason ?? null,
+          recommendations: validation.recommendations ?? null,
+        },
       };
     }
 
@@ -851,12 +863,15 @@ async function waitForValidation(api, angleId) {
   }
 
   return {
-    status: 'pending',
-    is_valid: null,
-    // The registration leg keys on the file's md5 within the building, so the
-    // same path re-registers the same view. Repeating the call is a resumed
-    // wait, not a second photo.
-    reason: 'Validation has not finished yet. Call upload_photo again with the same file to keep waiting: it resumes on this same view and uploads nothing twice.',
+    view_id: null,
+    validation: {
+      status: 'pending',
+      is_valid: null,
+      // Registration keys on the file's md5 within the building, so the same
+      // path re-registers the same upload. Repeating the call is a resumed
+      // wait, not a second photo.
+      reason: 'The photo is still being read. Call upload_photo again with the same file to keep waiting: it resumes on the same upload and uploads nothing twice.',
+    },
   };
 }
 

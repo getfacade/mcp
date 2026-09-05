@@ -61,7 +61,7 @@ Messages, including refusals, come from the service in the language of
 | Tool | What it does |
 |---|---|
 | `create_building` | Creates a building. The name is unique per account. Say where it stands, or the place is inferred from the connection the call arrives on. |
-| `upload_photo` | Registers a view, uploads the bytes, confirms, waits for validation. |
+| `upload_photo` | Registers the file, uploads the bytes, confirms, waits for the answer: a view to design from, a drawing or reference kept with the building, or a refusal with the reason. |
 | `start_design` | Creates a design and queues its render. Returns a job id. |
 | `refine_design` | Changes a finished design in words. Every step after the first. |
 | `get_job` | Polls one render, estimate or album. |
@@ -85,7 +85,7 @@ Messages, including refusals, come from the service in the language of
 Rendering is asynchronous: `start_design`, `refine_design`, `order_estimate` and `order_album` return a job id
 immediately, and `get_job` reports when it is done. A finished estimate reads `ready` where a
 render and an album read `completed`. The only call that waits is `upload_photo`, which polls
-until the photo is accepted or rejected.
+until the answer is in.
 
 ## A paid call is never ordered twice
 

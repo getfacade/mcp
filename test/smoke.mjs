@@ -10,18 +10,32 @@
 
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const calls = [];
+// Filled in once the stub is listening — the upload policy points the bytes at it.
+let storagePutUrl = '';
 let upscaleAttempts = 0;
 
 const stub = createServer(async (req, res) => {
   const body = await new Promise((resolve) => {
     let raw = '';
     req.on('data', (chunk) => (raw += chunk));
-    req.on('end', () => resolve(raw ? JSON.parse(raw) : null));
+    // The storage leg PUTs raw bytes, not JSON — keep the stub from choking on
+    // a body it was never meant to read.
+    req.on('end', () => {
+      if (!raw) return resolve(null);
+      try {
+        resolve(JSON.parse(raw));
+      } catch {
+        resolve(null);
+      }
+    });
   });
 
   calls.push({
@@ -76,6 +90,57 @@ const stub = createServer(async (req, res) => {
           relationships: { renders: { data: [{ type: 'renders', id: 'render-1' }] } },
         },
       ],
+    });
+  }
+
+  // The bytes go straight to storage, past the API.
+  if (req.url === '/storage/put' && req.method === 'PUT') {
+    return reply(200, {});
+  }
+
+  // The intake: registering a file answers with an upload policy and nothing
+  // else settled — what the photo turns out to be is decided later.
+  if (req.url === '/api/v1/projects/bld-1/uploads' && req.method === 'POST') {
+    return reply(201, {
+      data: {
+        type: 'upload',
+        id: 'upload-1',
+        attributes: {
+          status: 'pending',
+          upload_policy: { method: 'PUT', url: `${storagePutUrl}`, headers: {} },
+          validation: { status: 'pending', is_in_progress: true },
+          outcome: { type: null, id: null },
+        },
+      },
+    });
+  }
+
+  if (req.url === '/api/v1/projects/bld-1/uploads/upload-1/confirm' && req.method === 'POST') {
+    return reply(200, {
+      data: {
+        type: 'upload',
+        id: 'upload-1',
+        attributes: {
+          status: 'processing',
+          validation: { status: 'processing', is_in_progress: true },
+          outcome: { type: null, id: null },
+        },
+      },
+    });
+  }
+
+  // The settled intake names what it created: here, a view to design from.
+  if (req.url === '/api/v1/projects/bld-1/uploads/upload-1' && req.method === 'GET') {
+    return reply(200, {
+      data: {
+        type: 'upload',
+        id: 'upload-1',
+        attributes: {
+          status: 'valid',
+          validation: { status: 'valid', is_valid: true, is_in_progress: false, recommendations: null },
+          outcome: { type: 'angle', id: 'view-1' },
+        },
+      },
     });
   }
 
@@ -182,6 +247,7 @@ const stub = createServer(async (req, res) => {
 
 await new Promise((resolve) => stub.listen(0, resolve));
 const baseUrl = `http://127.0.0.1:${stub.address().port}/api/v1`;
+storagePutUrl = `http://127.0.0.1:${stub.address().port}/storage/put`;
 
 const client = new Client({ name: 'smoke', version: '0.0.0' });
 await client.connect(
@@ -248,6 +314,30 @@ const created = JSON.parse((await client.callTool({ name: 'create_building', arg
 assert.equal(created.building_id, 'bld-1');
 assert.equal(calls[0].auth, 'Bearer test-key');
 assert.equal(calls[0].body.data.type, 'project');
+
+// One photo, one intake: the answer names the view it became, and that id is
+// what a design is started from. A file the server files elsewhere comes back
+// with no view id at all.
+const photoDir = await mkdtemp(join(tmpdir(), 'getfacade-mcp-'));
+const photoFile = join(photoDir, 'front.png');
+// A PNG header is all the client reads: the md5 and the pixel size it sends.
+const png = Buffer.alloc(24);
+png.write('\x89PNG\r\n\x1a\n', 0, 'binary');
+png.write('IHDR', 12, 'ascii');
+png.writeUInt32BE(1600, 16);
+png.writeUInt32BE(1200, 20);
+await writeFile(photoFile, png);
+
+const uploaded = JSON.parse(
+  (await client.callTool({ name: 'upload_photo', arguments: { building_id: 'bld-1', file_path: photoFile } })).content[0].text
+);
+assert.equal(uploaded.upload_id, 'upload-1');
+assert.equal(uploaded.view_id, 'view-1');
+assert.equal(uploaded.validation.is_valid, true);
+assert.ok(
+  calls.some((call) => call.url === '/api/v1/projects/bld-1/uploads' && call.method === 'POST'),
+  'the photo is registered against the building, not against a view'
+);
 
 // A delete answers 204 with no body; the wrapper must not try to read one.
 const deleted = JSON.parse((await client.callTool({ name: 'delete_render', arguments: { render_id: 'render-1' } })).content[0].text);

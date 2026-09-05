@@ -80,7 +80,8 @@ const building = await call('create_building', {
 });
 
 const photoResult = await call('upload_photo', { building_id: building.building_id, file_path: photo });
-assert.equal(photoResult.validation.is_valid, true, 'a rejected photo cannot be rendered');
+assert.equal(photoResult.validation.is_valid, true, 'a photo that was not accepted cannot be rendered');
+assert.ok(photoResult.view_id, 'an accepted photo is a view of the house and says which one');
 
 if (process.env.RENDER === '1') {
   const design = await call('start_design', {
