@@ -21,6 +21,7 @@ const calls = [];
 // Filled in once the stub is listening — the upload policy points the bytes at it.
 let storagePutUrl = '';
 let upscaleAttempts = 0;
+let registerCount = 0;
 
 const stub = createServer(async (req, res) => {
   const body = await new Promise((resolve) => {
@@ -101,13 +102,20 @@ const stub = createServer(async (req, res) => {
   // The intake: registering a file answers with an upload policy and nothing
   // else settled — what the photo turns out to be is decided later.
   if (req.url === '/api/v1/projects/bld-1/uploads' && req.method === 'POST') {
+    registerCount += 1;
+    const id = `upload-${registerCount}`;
+    // The fifth file is one the service already holds: no bytes to PUT.
+    const skipUpload = id === 'upload-5';
+
     return reply(201, {
       data: {
         type: 'upload',
-        id: 'upload-1',
+        id,
         attributes: {
           status: 'pending',
-          upload_policy: { method: 'PUT', url: `${storagePutUrl}`, headers: {} },
+          upload_policy: skipUpload
+            ? { method: 'PUT', url: '', headers: {}, skip_upload: true }
+            : { method: 'PUT', url: `${storagePutUrl}`, headers: {} },
           validation: { status: 'pending', is_in_progress: true },
           outcome: { type: null, id: null },
         },
@@ -115,11 +123,11 @@ const stub = createServer(async (req, res) => {
     });
   }
 
-  if (req.url === '/api/v1/projects/bld-1/uploads/upload-1/confirm' && req.method === 'POST') {
+  if (/^\/api\/v1\/projects\/bld-1\/uploads\/upload-\d+\/confirm$/.test(req.url) && req.method === 'POST') {
     return reply(200, {
       data: {
         type: 'upload',
-        id: 'upload-1',
+        id: req.url.split('/').at(-2),
         attributes: {
           status: 'processing',
           validation: { status: 'processing', is_in_progress: true },
@@ -129,16 +137,66 @@ const stub = createServer(async (req, res) => {
     });
   }
 
-  // The settled intake names what it created: here, a view to design from.
-  if (req.url === '/api/v1/projects/bld-1/uploads/upload-1' && req.method === 'GET') {
+  // Every settled outcome the agent surface has to tell apart. A file kept as a
+  // reference is not a refusal, and a read that failed is not a verdict on the
+  // photo — an agent that cannot tell them apart abandons a file it should have
+  // used, or one it should have sent again.
+  if (/^\/api\/v1\/projects\/bld-1\/uploads\/upload-\d+$/.test(req.url) && req.method === 'GET') {
+    const id = req.url.split('/').at(-1);
+    const settled = {
+      'upload-1': {
+        status: 'valid',
+        validation: { status: 'valid', is_valid: true, is_in_progress: false, recommendations: null },
+        outcome: { type: 'angle', id: 'view-1' },
+      },
+      'upload-2': {
+        status: 'reference',
+        validation: {
+          status: 'reference',
+          is_valid: false,
+          is_in_progress: false,
+          routed_to_references: true,
+          can_override_building: true,
+          recommendations: 'Added to your references.',
+        },
+        outcome: { type: 'reference', id: 'ref-9' },
+      },
+      'upload-3': {
+        status: 'technical_error',
+        validation: {
+          status: 'technical_error',
+          is_valid: false,
+          is_in_progress: false,
+          is_technical_error: true,
+          recommendations: 'Could not read the photo. Send it again.',
+        },
+        outcome: { type: null, id: null },
+      },
+      'upload-4': {
+        status: 'prohibited',
+        validation: { status: 'prohibited', is_valid: false, is_in_progress: false, recommendations: 'That file was removed.' },
+        outcome: { type: null, id: null },
+      },
+      // Never settles — the wait has to end on its own and say so.
+      'upload-5': {
+        status: 'processing',
+        validation: { status: 'processing', is_in_progress: true },
+        outcome: { type: null, id: null },
+      },
+    }[id];
+
+    return reply(200, { data: { type: 'upload', id, attributes: settled } });
+  }
+
+  if (/^\/api\/v1\/projects\/bld-1\/uploads\/upload-\d+\/promote$/.test(req.url) && req.method === 'POST') {
     return reply(200, {
       data: {
         type: 'upload',
-        id: 'upload-1',
+        id: req.url.split('/').at(-2),
         attributes: {
           status: 'valid',
-          validation: { status: 'valid', is_valid: true, is_in_progress: false, recommendations: null },
-          outcome: { type: 'angle', id: 'view-1' },
+          validation: { status: 'valid', is_valid: true, is_in_progress: false },
+          outcome: { type: 'angle', id: 'view-2' },
         },
       },
     });
@@ -283,6 +341,7 @@ assert.deepEqual(names, [
   'update_estimate_line',
   'upload_photo',
   'upscale_render',
+  'use_photo_as_view',
 ]);
 
 // Every tool declares its annotations. A client decides from them whether a
@@ -333,10 +392,69 @@ const uploaded = JSON.parse(
 );
 assert.equal(uploaded.upload_id, 'upload-1');
 assert.equal(uploaded.view_id, 'view-1');
+assert.equal(uploaded.kept_as, 'view');
 assert.equal(uploaded.validation.is_valid, true);
+assert.deepEqual(uploaded.outcome, { type: 'angle', id: 'view-1' });
 assert.ok(
   calls.some((call) => call.url === '/api/v1/projects/bld-1/uploads' && call.method === 'POST'),
   'the photo is registered against the building, not against a view'
+);
+
+// A photo kept as a reference was ACCEPTED. Reporting it as "not accepted"
+// (the only thing a `view_id` of null used to say) makes an agent abandon a
+// file the service is holding for it — and one it can still claim as a view.
+const keptAsReference = JSON.parse(
+  (await client.callTool({ name: 'upload_photo', arguments: { building_id: 'bld-1', file_path: photoFile } })).content[0].text
+);
+assert.equal(keptAsReference.kept_as, 'reference');
+assert.equal(keptAsReference.view_id, null);
+assert.deepEqual(keptAsReference.outcome, { type: 'reference', id: 'ref-9' });
+assert.equal(keptAsReference.can_use_as_view, true);
+assert.equal(keptAsReference.can_retry, false);
+
+// …and claiming it is one call, with the view it becomes named in the answer.
+const claimed = JSON.parse(
+  (await client.callTool({
+    name: 'use_photo_as_view',
+    arguments: { building_id: 'bld-1', upload_id: keptAsReference.upload_id },
+  })).content[0].text
+);
+assert.equal(claimed.view_id, 'view-2');
+assert.equal(claimed.kept_as, 'view');
+
+// A read that failed on the service side is not a verdict on the photo: it
+// costs nothing and the same file should be sent again.
+const failedRead = JSON.parse(
+  (await client.callTool({ name: 'upload_photo', arguments: { building_id: 'bld-1', file_path: photoFile } })).content[0].text
+);
+assert.equal(failedRead.can_retry, true);
+assert.equal(failedRead.kept_as, null);
+assert.equal(failedRead.validation.recommendations, 'Could not read the photo. Send it again.');
+
+// A removed file is final: nothing kept, nothing to claim, nothing to retry.
+const removed = JSON.parse(
+  (await client.callTool({ name: 'upload_photo', arguments: { building_id: 'bld-1', file_path: photoFile } })).content[0].text
+);
+assert.equal(removed.validation.status, 'prohibited');
+assert.equal(removed.kept_as, null);
+assert.equal(removed.can_use_as_view, false);
+assert.equal(removed.can_retry, false);
+
+// The service already holds these bytes, so there is no PUT to make. Asked not
+// to wait, the answer is `pending` with nothing kept — never a refusal.
+const beforePut = calls.filter((call) => call.url === '/storage/put').length;
+const stillReading = JSON.parse(
+  (await client.callTool({
+    name: 'upload_photo',
+    arguments: { building_id: 'bld-1', file_path: photoFile, wait_for_validation: false },
+  })).content[0].text
+);
+assert.equal(stillReading.validation.status, 'pending');
+assert.equal(stillReading.kept_as, null);
+assert.equal(
+  calls.filter((call) => call.url === '/storage/put').length,
+  beforePut,
+  'bytes the service already holds are not sent again'
 );
 
 // A delete answers 204 with no body; the wrapper must not try to read one.

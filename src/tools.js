@@ -89,13 +89,14 @@ export function buildTools(api) {
         openWorldHint: true,
       },
       description:
-        'Upload an exterior photo of the building and wait for the answer. Three legs: register the file, PUT the bytes to storage, confirm. What the photo turns out to be is decided on the server: a view of the house that can be designed, a drawing or reference kept with the building, or a refusal with the reason. The answer says which, and only a photo accepted as a view carries a `view_id` to design from. The wait is bounded: a `pending` answer means it is still being read, and calling this again with the same file resumes it rather than uploading a second copy.',
+        'Upload an exterior photo of the building and wait for the answer. Three legs: register the file, PUT the bytes to storage, confirm. What the photo turns out to be is decided on the server, and `kept_as` says which: "view" (a photo of the house to design from — `view_id` names it), "document" (a drawing kept with the building), "reference" or "render_style" (kept alongside it), or nothing kept at all. A file kept as anything but a view is not a refusal, and `can_use_as_view` says when it can still be claimed as one with use_photo_as_view. `can_retry` means the read failed on the service side: nothing was created, nothing was charged, send the same photo again. The wait is bounded: a `pending` answer means it is still being read, and calling this again with the same file resumes it rather than uploading a second copy.',
       schema: {
         building_id: z.string().describe('Building id from create_building'),
         file_path: z.string().describe('Absolute path to a JPEG, PNG or WebP file on this machine'),
+        intent: z.enum(['auto', 'view']).optional().describe('What the file is meant to be. "auto" (the default) lets the service read it and file it wherever it belongs. "view" states that this is a photo of the building to design from, and the file is refused when it is not one'),
         wait_for_validation: z.boolean().optional().default(true),
       },
-      async handler({ building_id, file_path, wait_for_validation = true }) {
+      async handler({ building_id, file_path, intent, wait_for_validation = true }) {
         const image = await readImage(file_path);
 
         const registered = await api.post(`/projects/${building_id}/uploads`, {
@@ -107,6 +108,7 @@ export function buildTools(api) {
               height: image.height,
               file_name: image.fileName,
               content_type: image.contentType,
+              ...(intent ? { intent } : {}),
               // aspect_ratio deliberately omitted — the server derives it.
             },
           },
@@ -123,12 +125,48 @@ export function buildTools(api) {
         await api.post(`/projects/${building_id}/uploads/${uploadId}/confirm`, {});
 
         if (!wait_for_validation) {
-          return { upload_id: uploadId, view_id: null, validation: { status: 'pending' } };
+          return {
+            upload_id: uploadId,
+            view_id: null,
+            outcome: { type: null, id: null },
+            kept_as: null,
+            can_use_as_view: false,
+            can_retry: false,
+            validation: { status: 'pending' },
+          };
         }
 
         const settled = await waitForValidation(api, building_id, uploadId);
 
-        return { upload_id: uploadId, view_id: settled.view_id, validation: settled.validation };
+        return { upload_id: uploadId, ...settled };
+      },
+    },
+
+    {
+      name: 'use_photo_as_view',
+      title: 'Use the photo as a view after all',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+      description:
+        'Claim a photo the service kept elsewhere — as a drawing, a reference, or a building it read as a different one — as a view of this building to design from. Returns the `view_id` it becomes; the reference it had been is removed. Offered only when upload_photo answered `can_use_as_view: true`; otherwise the call is refused.',
+      schema: {
+        building_id: z.string().describe('Building id the photo was uploaded to'),
+        upload_id: z.string().describe('Upload id from upload_photo'),
+      },
+      async handler({ building_id, upload_id }) {
+        const promoted = await api.post(`/projects/${building_id}/uploads/${upload_id}/promote`, {});
+        const attributes = promoted.data?.attributes ?? {};
+        const outcome = attributes.outcome ?? {};
+
+        return {
+          upload_id,
+          view_id: outcome.type === 'angle' ? outcome.id : null,
+          kept_as: outcome.type === 'angle' ? 'view' : null,
+        };
       },
     },
 
@@ -142,7 +180,7 @@ export function buildTools(api) {
         openWorldHint: true,
       },
       description:
-        'Design the exterior of this house on a chosen view, and show the result as a picture. The design is worked out against the building\'s country: which materials are applicable there, which manufacturer products are really sold there, and what the build-up behind the surface is — the render is how that decision is shown, not a picture made for its own sake. Creates a new design (concept) and queues the work; returns a job id to poll with get_job. `prompt` is the free-form wish for this design ("a modern facade with a wide porch"). Colors accept the same strings the apps use: "palette:1", "paint:412", "siding:88@double-4-dutchlap" or "#RRGGBB" — order carries the 60/30/10 role, the first entry is the dominant wall color; `brand_selections` names real manufacturer products: "siding:brand:12", "siding:line:40@double-4-dutchlap", "paint:product:412". Omit `seed` unless reproducing an earlier render. To change a design that already rendered, use refine_design instead of starting another one.',
+        'Design the exterior of this house on a chosen view, and show the result as a picture. The design is worked out against the building\'s country: which materials are applicable there, which manufacturer products are really sold there, and what the build-up behind the surface is — the render shows that decision on the house itself. Creates a new design (concept) and queues the work; returns a job id to poll with get_job. `prompt` is the free-form wish for this design ("a modern facade with a wide porch"). Colors accept the same strings the apps use: "palette:1", "paint:412", "siding:88@double-4-dutchlap" or "#RRGGBB" — order carries the 60/30/10 role, the first entry is the dominant wall color; `brand_selections` names real manufacturer products: "siding:brand:12", "siding:line:40@double-4-dutchlap", "paint:product:412". Omit `seed` unless reproducing an earlier render. To change a design that already rendered, use refine_design instead of starting another one.',
       schema: {
         building_id: z.string(),
         view_id: z.string().describe('View id from upload_photo'),
@@ -840,6 +878,19 @@ export function buildTools(api) {
  * drawing or a reference kept with the building has no view to design from, and
  * a refusal has nothing at all.
  */
+/**
+ * Where the photo ended up, in one word. `null` when nothing was kept: a
+ * refusal, a read that failed, or a file that was removed.
+ */
+function keptAs(validation, outcome) {
+  if (outcome.type === 'angle') return 'view';
+  if (validation.routed_to_documents === true) return 'document';
+  if (validation.routed_to_output_style === true) return 'render_style';
+  if (validation.routed_to_references === true) return 'reference';
+
+  return null;
+}
+
 async function waitForValidation(api, buildingId, uploadId) {
   for (let attempt = 0; attempt < VALIDATION_POLL_ATTEMPTS; attempt += 1) {
     const attributes = (await api.get(`/projects/${buildingId}/uploads/${uploadId}`)).data?.attributes ?? {};
@@ -850,6 +901,15 @@ async function waitForValidation(api, buildingId, uploadId) {
 
       return {
         view_id: outcome.type === 'angle' ? outcome.id : null,
+        // What the photo became, and what can still be done about it. A file
+        // kept as a reference is not a refusal, and a read that failed on the
+        // service's side is not a verdict on the photo — reporting either as
+        // "not accepted" is how an agent abandons a file it should have used
+        // or sent again.
+        outcome: { type: outcome.type ?? null, id: outcome.id ?? null },
+        kept_as: keptAs(validation, outcome),
+        can_use_as_view: validation.can_override_building === true,
+        can_retry: validation.is_technical_error === true,
         validation: {
           status: validation.status,
           is_valid: validation.is_valid,
@@ -864,6 +924,10 @@ async function waitForValidation(api, buildingId, uploadId) {
 
   return {
     view_id: null,
+    outcome: { type: null, id: null },
+    kept_as: null,
+    can_use_as_view: false,
+    can_retry: false,
     validation: {
       status: 'pending',
       is_valid: null,
