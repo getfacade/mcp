@@ -67,8 +67,27 @@ jobs:
           echo "npm $(npm --version), node $(node --version)"
           echo "identity token endpoint: ${ACTIONS_ID_TOKEN_REQUEST_URL:+present}${ACTIONS_ID_TOKEN_REQUEST_URL:-MISSING}"
 
+      # A version can never be published twice, so a re-run after a later step
+      # failed (the MCP registry below) must skip this instead of failing on it.
       - name: Publish to npm
-        run: npm publish
+        run: |
+          PKG="$(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")"
+          if npm view "$PKG" version >/dev/null 2>&1; then
+            echo "$PKG is already on npm, skipping"
+          else
+            npm publish
+          fi
+
+      # The MCP registry validates against npm, which serves a fresh version
+      # with a delay; registering right after publish fails with a 404.
+      - name: Wait until npm serves the version
+        run: |
+          PKG="$(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")"
+          for i in $(seq 1 30); do
+            npm view "$PKG" version --prefer-online >/dev/null 2>&1 && exit 0
+            sleep 10
+          done
+          echo "$PKG still not served by npm after 5 minutes"; exit 1
 
       - name: Install mcp-publisher
         run: |
