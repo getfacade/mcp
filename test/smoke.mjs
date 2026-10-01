@@ -16,6 +16,9 @@ import { join } from 'node:path';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+
+import { GetFacadeApi, createGetFacadeServer } from '../src/server.js';
 
 const calls = [];
 // Filled in once the stub is listening — the upload policy points the bytes at it.
@@ -97,6 +100,26 @@ const stub = createServer(async (req, res) => {
   // The bytes go straight to storage, past the API.
   if (req.url === '/storage/put' && req.method === 'PUT') {
     return reply(200, {});
+  }
+
+  // The building's photo library, which a person may have filled in the app.
+  if (req.url === '/api/v1/projects/bld-1/angles' && req.method === 'GET') {
+    return reply(200, {
+      data: [
+        { type: 'angle', id: 'view-1', attributes: { name: 'Front', is_main: true, file_url: 'https://cdn.example/front.jpg', validation: { is_valid: true } } },
+      ],
+    });
+  }
+
+  // A photo reachable by link, as the remote connector receives one.
+  if (req.url === '/photos/front.png' && req.method === 'GET') {
+    const png = Buffer.alloc(24);
+    png.write('\x89PNG\r\n\x1a\n', 0, 'binary');
+    png.write('IHDR', 12, 'ascii');
+    png.writeUInt32BE(1600, 16);
+    png.writeUInt32BE(1200, 20);
+    res.writeHead(200, { 'Content-Type': 'image/png' });
+    return res.end(png);
   }
 
   // The intake: registering a file answers with an upload policy and nothing
@@ -332,6 +355,7 @@ assert.deepEqual(names, [
   'get_job',
   'list_designs',
   'list_jobs',
+  'list_photos',
   'list_token_packages',
   'order_album',
   'order_estimate',
@@ -371,6 +395,7 @@ assert.equal(tools.find((tool) => tool.name === 'buy_tokens').annotations.idempo
 
 const created = JSON.parse((await client.callTool({ name: 'create_building', arguments: { name: 'Maple St 14' } })).content[0].text);
 assert.equal(created.building_id, 'bld-1');
+assert.equal(created.photos_page, 'https://app.getfacade.ai/project/bld-1/angles');
 assert.equal(calls[0].auth, 'Bearer test-key');
 assert.equal(calls[0].body.data.type, 'project');
 
@@ -578,6 +603,41 @@ assert.equal(buildingCall.idempotencyKey, undefined);
 const firstRefine = calls.filter((call) => call.url === '/api/v1/concepts/design-1/angles/ca-1/renders');
 assert.ok(firstRefine[0].idempotencyKey);
 
+// The remote connector: the same tools, minus buying, and a photo by link.
+const remote = new Client({ name: 'smoke-remote', version: '0.0.0' });
+const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+await createGetFacadeServer({
+  api: new GetFacadeApi({ apiKey: 'oauth-key', baseUrl }),
+  mode: 'remote',
+}).connect(serverSide);
+await remote.connect(clientSide);
+
+const remoteTools = (await remote.listTools()).tools;
+assert.ok(!remoteTools.some((tool) => tool.name === 'buy_tokens'), 'the remote connector never buys');
+assert.equal(remoteTools.length, tools.length - 1);
+const remoteUpload = remoteTools.find((tool) => tool.name === 'upload_photo');
+assert.ok(remoteUpload.inputSchema.properties.image_url);
+assert.equal(remoteUpload.inputSchema.properties.file_path, undefined);
+
+const byLink = JSON.parse(
+  (await remote.callTool({
+    name: 'upload_photo',
+    arguments: { building_id: 'bld-1', image_url: `http://127.0.0.1:${stub.address().port}/photos/front.png` },
+  })).content[0].text,
+);
+assert.ok(byLink.upload_id);
+const linkRegister = calls.filter((call) => call.url === '/api/v1/projects/bld-1/uploads' && call.method === 'POST').at(-1);
+assert.equal(linkRegister.body.data.attributes.width, 1600);
+assert.equal(linkRegister.body.data.attributes.file_name, 'front.png');
+assert.equal(linkRegister.body.data.attributes.content_type, 'image/png');
+assert.equal(linkRegister.auth, 'Bearer oauth-key');
+
+const photos = JSON.parse((await remote.callTool({ name: 'list_photos', arguments: { building_id: 'bld-1' } })).content[0].text);
+assert.deepEqual(photos.views, [
+  { view_id: 'view-1', name: 'Front', is_main: true, image_url: 'https://cdn.example/front.jpg', is_valid: true },
+]);
+
+await remote.close();
 await client.close();
 stub.close();
 

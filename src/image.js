@@ -21,20 +21,69 @@ const MIME_BY_EXTENSION = {
 };
 
 export async function readImage(filePath) {
-  const bytes = await readFile(filePath);
+  return describe(await readFile(filePath), basename(filePath), MIME_BY_EXTENSION[extname(filePath).toLowerCase()]);
+}
+
+/**
+ * The remote server has no file system of the person it talks to, so the photo
+ * arrives as a link. Bounded in time and in size: a link to something that is
+ * not a photo, or to an endless stream, must end in a plain answer rather than
+ * a hung tool call.
+ */
+const URL_FETCH_TIMEOUT_MS = 60_000;
+const URL_MAX_BYTES = 30 * 1024 * 1024;
+
+export async function readImageFromUrl(imageUrl) {
+  const url = new URL(imageUrl);
+
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new Error('`image_url` must be an http(s) link to a JPEG, PNG or WebP file.');
+  }
+
+  const response = await fetch(url, { signal: AbortSignal.timeout(URL_FETCH_TIMEOUT_MS), redirect: 'follow' });
+
+  if (!response.ok) {
+    throw new Error(`The photo link answered HTTP ${response.status}; it has to be a direct, public link to the image file.`);
+  }
+
+  if (Number(response.headers.get('content-length') ?? 0) > URL_MAX_BYTES) {
+    throw new Error('The photo behind this link is larger than 30 MB.');
+  }
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+
+  if (bytes.length > URL_MAX_BYTES) {
+    throw new Error('The photo behind this link is larger than 30 MB.');
+  }
+
+  const name = basename(url.pathname) || 'photo';
+  const headerType = (response.headers.get('content-type') ?? '').split(';')[0].trim();
+
+  return describe(bytes, name, MIME_BY_EXTENSION[extname(name).toLowerCase()] ?? sniffMime(bytes) ?? headerType);
+}
+
+function describe(bytes, fileName, contentType) {
   const dimensions = readDimensions(bytes);
 
   if (!dimensions) {
-    throw new Error(`Cannot read the pixel size of ${filePath}. Supported formats: JPEG, PNG, WebP.`);
+    throw new Error(`Cannot read the pixel size of ${fileName}. Supported formats: JPEG, PNG, WebP.`);
   }
 
   return {
     bytes,
     md5: createHash('md5').update(bytes).digest('hex'),
-    fileName: basename(filePath),
-    contentType: MIME_BY_EXTENSION[extname(filePath).toLowerCase()] ?? 'application/octet-stream',
+    fileName,
+    contentType: contentType || 'application/octet-stream',
     ...dimensions,
   };
+}
+
+function sniffMime(buffer) {
+  if (readPng(buffer)) return 'image/png';
+  if (readWebp(buffer)) return 'image/webp';
+  if (readJpeg(buffer)) return 'image/jpeg';
+
+  return null;
 }
 
 function readDimensions(buffer) {

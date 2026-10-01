@@ -1,6 +1,6 @@
 {
   "name": "@getfacade/mcp",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "MCP server for GetFacade.ai: design a house exterior on its own photo, with materials that apply in the building's country, products really sold there, and the build-up behind the surface",
   "mcpName": "ai.getfacade/mcp",
   "license": "MIT",
@@ -44,5 +44,9 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.0",
     "zod": "^3.25.76"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./server": "./src/server.js"
   }
 }

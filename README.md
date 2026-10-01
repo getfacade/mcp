@@ -19,6 +19,32 @@ The server is a thin wrapper over the public GetFacade API. It stores nothing, c
 and decides nothing: every rule (pricing, admission, the colour grammar, every message) stays
 on the server, and the wrapper only carries calls and answers.
 
+## Connect by URL
+
+Most clients connect without installing anything. Add a custom connector with this URL and
+sign in to your GetFacade account when asked:
+
+```
+https://app.getfacade.ai/mcp
+```
+
+- **Claude** (claude.ai and desktop): Settings → Connectors → Add custom connector.
+- **Claude Code**: `claude mcp add --transport http getfacade https://app.getfacade.ai/mcp`
+- **ChatGPT, Cursor, VS Code** and other MCP clients: add a remote (HTTP) server with the same URL.
+
+On the sign-in screen you set a spend cap for the connection. It spends tokens from the agent
+wallet of your account and never buys tokens on its own. The connection appears among your agent
+keys in the app, where it can be revoked at any time.
+
+A photo attached to a chat has no link the connector can read. `create_building` returns
+`photos_page`, the building's photo page in the app: add the photo there, and `list_photos` picks
+it up. A direct public link to an image works with `upload_photo` as well.
+
+## Run locally
+
+The package below runs the same tools on your own machine with an agent key. Use it for
+automation, or when the photos are files on that machine.
+
 ## Requirements
 
 - Node.js 20+
@@ -61,7 +87,8 @@ Messages, including refusals, come from the service in the language of
 | Tool | What it does |
 |---|---|
 | `create_building` | Creates a building. The name is unique per account. Say where it stands, or the place is inferred from the connection the call arrives on. |
-| `upload_photo` | Registers the file, uploads the bytes, confirms, waits for the answer: a view to design from, a drawing or reference kept with the building, or a refusal with the reason. |
+| `upload_photo` | Takes a file path (local) or an image link (URL connection). Registers the file, uploads the bytes, confirms, waits for the answer: a view to design from, a drawing or reference kept with the building, or a refusal with the reason. |
+| `list_photos` | The views of a building, including photos added in the app. `view_id` is what `start_design` takes. |
 | `start_design` | Creates a design and queues its render. Returns a job id. |
 | `refine_design` | Changes a finished design in words. Every step after the first. |
 | `get_job` | Polls one render, estimate or album. |
@@ -78,7 +105,7 @@ Messages, including refusals, come from the service in the language of
 | `delete_design` | Deletes one design with the renders under it. |
 | `delete_building` | Deletes a building with everything under it. |
 | `list_token_packages` | The packages this account can buy. |
-| `buy_tokens` | Refills this key's wallet. See below. |
+| `buy_tokens` | Refills this key's wallet. Local package only. See below. |
 | `get_balance` | Agent wallet, key cap, and whether the next paid call will be accepted. |
 | `report_problem` | Reports a defect in this API. Free, and works on an empty wallet. |
 

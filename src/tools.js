@@ -15,7 +15,7 @@
  */
 
 import { z } from 'zod';
-import { readImage } from './image.js';
+import { readImage, readImageFromUrl } from './image.js';
 
 /**
  * How long `upload_photo` is willing to wait for validation, and how often it
@@ -49,8 +49,27 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * because every handler here is an HTTP call to the service.
  */
 
-export function buildTools(api) {
-  return [
+/**
+ * Two places run these tools, and they differ in exactly two ways.
+ *
+ * `local` is the npm package on the person's own machine: it can read a photo
+ * from disk, and it may buy tokens, because the key it runs on was issued by a
+ * person who ticked that box knowingly (ADR-005).
+ *
+ * `remote` is the connector at app.getfacade.ai/mcp, reached by URL from a chat
+ * client. It has no file system of the person on the other end, so a photo
+ * arrives as a link or is added in the app; and it never buys, because the
+ * only person who approved it did so on a consent screen inside someone else's
+ * client, which is not where a payment is decided (docs/agent-api/ADR-012).
+ *
+ * `appUrl` is where a person opens a building in the app. Both modes hand it
+ * out: a chat that cannot pass a photo along can still send the person there.
+ */
+export function buildTools(api, { mode = 'local', appUrl = 'https://app.getfacade.ai' } = {}) {
+  const remote = mode === 'remote';
+  const photosPage = (buildingId) => `${appUrl.replace(/\/+$/, '')}/project/${buildingId}/angles`;
+
+  const tools = [
     {
       name: 'create_building',
       title: 'Create a building',
@@ -75,7 +94,11 @@ export function buildTools(api) {
           },
         });
 
-        return { building_id: created.data.id, name: created.data.attributes?.name ?? name };
+        return {
+          building_id: created.data.id,
+          name: created.data.attributes?.name ?? name,
+          photos_page: photosPage(created.data.id),
+        };
       },
     },
 
@@ -92,12 +115,14 @@ export function buildTools(api) {
         'Upload an exterior photo of the building and wait for the answer. Three legs: register the file, PUT the bytes to storage, confirm. What the photo turns out to be is decided on the server, and `kept_as` says which: "view" (a photo of the house to design from — `view_id` names it), "document" (a drawing kept with the building), "reference" or "render_style" (kept alongside it), or nothing kept at all. A file kept as anything but a view is not a refusal, and `can_use_as_view` says when it can still be claimed as one with use_photo_as_view. `can_retry` means the read failed on the service side: nothing was created, nothing was charged, send the same photo again. The wait is bounded: a `pending` answer means it is still being read, and calling this again with the same file resumes it rather than uploading a second copy.',
       schema: {
         building_id: z.string().describe('Building id from create_building'),
-        file_path: z.string().describe('Absolute path to a JPEG, PNG or WebP file on this machine'),
+        ...(remote
+          ? { image_url: z.string().url().describe('Direct public http(s) link to a JPEG, PNG or WebP photo. A photo attached to the chat has no such link: send the person to `photos_page` from create_building instead, then read it with list_photos') }
+          : { file_path: z.string().describe('Absolute path to a JPEG, PNG or WebP file on this machine') }),
         intent: z.enum(['auto', 'view']).optional().describe('What the file is meant to be. "auto" (the default) lets the service read it and file it wherever it belongs. "view" states that this is a photo of the building to design from, and the file is refused when it is not one'),
         wait_for_validation: z.boolean().optional().default(true),
       },
-      async handler({ building_id, file_path, intent, wait_for_validation = true }) {
-        const image = await readImage(file_path);
+      async handler({ building_id, file_path, image_url, intent, wait_for_validation = true }) {
+        const image = remote ? await readImageFromUrl(image_url) : await readImage(file_path);
 
         const registered = await api.post(`/projects/${building_id}/uploads`, {
           data: {
@@ -166,6 +191,32 @@ export function buildTools(api) {
           upload_id,
           view_id: outcome.type === 'angle' ? outcome.id : null,
           kept_as: outcome.type === 'angle' ? 'view' : null,
+        };
+      },
+    },
+
+    {
+      name: 'list_photos',
+      title: 'List photos of a building',
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
+      description:
+        'The views of a building: every photo accepted as a view of the house, whether it was uploaded here or added by the person in the app at `photos_page`. `view_id` is what start_design takes; `is_main` marks the main view. Use it after asking the person to add a photo in the app, to pick up what they added.',
+      schema: { building_id: z.string() },
+      async handler({ building_id }) {
+        const angles = await api.get(`/projects/${building_id}/angles`);
+
+        return {
+          photos_page: photosPage(building_id),
+          views: (angles.data ?? []).map((angle) => ({
+            view_id: angle.id,
+            name: angle.attributes?.name ?? null,
+            is_main: angle.attributes?.is_main ?? false,
+            image_url: angle.attributes?.file_url ?? null,
+            is_valid: angle.attributes?.validation?.is_valid ?? null,
+          })),
         };
       },
     },
@@ -866,6 +917,8 @@ export function buildTools(api) {
       },
     },
   ];
+
+  return remote ? tools.filter((tool) => tool.name !== 'buy_tokens') : tools;
 }
 
 /**
