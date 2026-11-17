@@ -66,7 +66,9 @@ export function createGetFacadeServer({ api, mode = 'local', appUrl } = {}) {
         title: tool.title,
         description: tool.description,
         inputSchema: tool.schema,
-        annotations: tool.annotations,
+        // The directory portals read the human name from `annotations.title`
+        // and flag a tool whose only title sits at the top level.
+        annotations: { title: tool.title, ...tool.annotations },
       },
       async (input) => {
         try {

@@ -377,6 +377,7 @@ for (const tool of tools) {
   const hints = tool.annotations;
 
   assert.ok(hints, `tool ${tool.name} ships without annotations`);
+  assert.ok(hints.title, `tool ${tool.name} ships without annotations.title`);
   assert.equal(hints.openWorldHint, true, `tool ${tool.name} talks to the service`);
 
   const isRead = tool.name.startsWith('get_') || tool.name.startsWith('list_');
